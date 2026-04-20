@@ -130,11 +130,9 @@ ENABLE_WARP = os.environ.get("ENABLE_WARP", "false").lower() == "true"
 GLOBAL_PROXIES = parse_proxies('GLOBAL_PROXY')
 TRANSPORT_ROUTES = parse_transport_routes()
 
-# Auto-add WARP to global proxies if enabled and none provided
-if ENABLE_WARP and not GLOBAL_PROXIES:
-    # Default WARP port (standard SOCKS5 port used in this environment)
-    GLOBAL_PROXIES = ["socks5://127.0.0.1:1080"]
-    logging.info("🛡️ WARP enabled: added default WARP proxy (port 1080) to global list.")
+# Configurazione proxy
+GLOBAL_PROXIES = parse_proxies('GLOBAL_PROXY')
+TRANSPORT_ROUTES = parse_transport_routes()
 
 # Logging configurazione proxy
 if GLOBAL_PROXIES: logging.info(f"🌍 Loaded {len(GLOBAL_PROXIES)} global proxies.")
