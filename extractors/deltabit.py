@@ -124,15 +124,9 @@ class DeltabitExtractor:
         
         # 1. Handle redirectors (safego.cc, clicka.cc, etc.)
         if any(d in url.lower() for d in ["safego.cc", "clicka.cc", "clicka"]):
-            # I redirector usano WARP
             url = await self._solve_redirector(url)
         
-        # 2. Una volta su Deltabit, passiamo a warp=off (IP Reale)
-        # Se l'URL risolto è già deltabit, la transizione deve essere pulita
-        self.bypass_warp_active = True
-        logger.debug(f"🔄 Switching to warp=off for Deltabit domain: {url}")
-
-        # 3. Normalize URL to embed format
+        # 2. Normalize URL to embed format
         # Normalize URL (only base domains, no forced /e/)
         if "deltabit.co" in url.lower():
             url = url.replace("deltabit.co/ ", "deltabit.co/")
@@ -232,7 +226,7 @@ class DeltabitExtractor:
             ocr = None
 
         try:
-            sess_res = await self._request_flaresolverr("sessions.create", force_bypass_warp=False)
+            sess_res = await self._request_flaresolverr("sessions.create")
             session_id = sess_res.get("session")
 
             current_url = url
@@ -241,17 +235,9 @@ class DeltabitExtractor:
                     break
                 
                 logger.debug(f"Deltabit: Redirector step {step+1} at {current_url}")
-                # Forziamo WARP per il redirector
-                res = await self._request_flaresolverr("request.get", current_url, session_id=session_id, force_bypass_warp=False)
+                res = await self._request_flaresolverr("request.get", current_url, session_id=session_id)
                 solution = res.get("solution", {})
-                new_url = solution.get("url", current_url)
-                
-                # Se il redirect ci ha portato su Deltabit, fermiamoci PRIMA di caricare la pagina con WARP
-                if "deltabit" in new_url.lower():
-                    logger.debug(f"Deltabit: Redirector landed on target domain, stopping WARP phase: {new_url}")
-                    return new_url
-
-                current_url = new_url
+                current_url = solution.get("url", current_url)
                 text = solution.get("response", "")
                 soup = BeautifulSoup(text, "lxml")
                 
@@ -356,24 +342,19 @@ class DeltabitExtractor:
         finally:
             if session_id:
                 try:
-                    await self._request_flaresolverr("sessions.destroy", session_id=session_id, force_bypass_warp=False)
+                    await self._request_flaresolverr("sessions.destroy", session_id=session_id)
                 except:
                     pass
         
     def _build_result(self, video_url: str, referer: str, user_agent: str) -> dict:
-        # Pulizia totale degli header per evitare blocchi IP/Cloudflare
-        clean_headers = {
-            "User-Agent": user_agent,
-            "Referer": referer,
-            "Origin": f"https://{urlparse(referer).netloc}",
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Connection": "keep-alive"
-        }
+        headers = self.base_headers.copy()
+        headers["Referer"] = referer
+        headers["User-Agent"] = user_agent
+        headers["Origin"] = f"https://{urlparse(referer).netloc}"
         
         return {
             "destination_url": video_url,
-            "request_headers": clean_headers,
+            "request_headers": headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
             "bypass_warp": self.bypass_warp_active
         }
