@@ -147,7 +147,7 @@ def get_proxy_for_url(url: str, transport_routes: list, global_proxies: list, by
     is_excluded = any(domain in normalized_url for domain in WARP_EXCLUDE_DOMAINS)
     
     if ENABLE_WARP and not bypass_warp and not is_excluded:
-        return WARP_PROXY_URL
+        return WARP_PROXY_URL if is_proxy_alive(WARP_PROXY_URL) else None
 
     # Fallback to Global Proxies
     # Se bypass_warp è True, preferiamo la connessione DIRETTA (Real IP) per coerenza

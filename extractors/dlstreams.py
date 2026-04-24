@@ -364,16 +364,16 @@ class DLStreamsExtractor:
             logger.debug("DLStreams server lookup failed for %s: %s", channel_key, exc)
         return "wind"
 
-    async def _capture_browser_session_state(self, channel_id: str, player_url: str | None = None) -> str | None:
+    async def _capture_browser_session_state(self, channel_id: str, player_url: str | None = None) -> tuple[str | None, str | None]:
         channel_key = f"premium{channel_id}"
         if self._is_browser_cooldown_active(channel_key):
             logger.debug("DLStreams browser session capture skipped during cooldown for %s", channel_key)
-            return None
+            return None, None
 
         lock = self._get_browser_lock(channel_key)
         async with lock:
             if self._is_browser_cooldown_active(channel_key):
-                return None
+                return None, None
 
             resolved_player_url = player_url or self._build_player_urls(channel_id)[0]
             logger.debug("DLStreams browser session capture starting for %s", channel_key)
@@ -392,26 +392,40 @@ class DLStreamsExtractor:
                     page.on("popup", handle_popup_capture)
 
                     manifest_text: str | None = None
+                    captured_stream_url: str | None = None
 
                     async def on_response(response):
-                        nonlocal manifest_text
+                        nonlocal manifest_text, captured_stream_url
                         try:
-                            # Catch any EXTM3U manifest from a proxy-style URL
-                            is_manifest_candidate = "/proxy/" in response.url and channel_key in response.url
-                            
+                            response_url = str(response.url)
+                            content_type = (response.headers.get("content-type") or "").lower()
+                            is_manifest_candidate = any(
+                                marker in response_url.lower()
+                                for marker in (".m3u8", "mono.css", "/proxy/", "master")
+                            ) or "mpegurl" in content_type
+
                             if is_manifest_candidate and response.status == 200:
                                 body = await response.body()
                                 decoded = body.decode("utf-8", errors="ignore")
                                 if decoded.lstrip().startswith("#EXTM3U"):
                                     manifest_text = decoded
-                                    self.stream_origin = self._origin_of(response.url)
-                                    logger.debug(f"DLStreams captured manifest from: {response.url}")
+                                    captured_stream_url = response_url
+                                    self.stream_origin = self._origin_of(response_url)
+                                    logger.debug(f"DLStreams captured manifest from: {response_url}")
+
+                            if (
+                                response.status == 200
+                                and captured_stream_url is None
+                                and "video/mp4" in content_type
+                            ):
+                                captured_stream_url = response_url
+                                logger.debug(f"DLStreams captured direct MP4 from: {response_url}")
                             
-                            if "/key/" in response.url and response.status == 200:
+                            if "/key/" in response_url and response.status == 200:
                                 body = await response.body()
-                                self._browser_key_cache[response.url] = body
-                                self.stream_origin = self._origin_of(response.url)
-                                logger.debug(f"DLStreams captured key from: {response.url}")
+                                self._browser_key_cache[response_url] = body
+                                self.stream_origin = self._origin_of(response_url)
+                                logger.debug(f"DLStreams captured key from: {response_url}")
                         except Exception as exc:
                             logger.debug("DLStreams browser capture hook failed for %s: %s", response.url, exc)
 
@@ -434,6 +448,16 @@ class DLStreamsExtractor:
                         if manifest_text and has_key:
                             break
                         await page.wait_for_timeout(500)
+
+                    if captured_stream_url is None:
+                        try:
+                            html = await page.content()
+                            mp4_match = re.search(r'https?://[^"\']+\.mp4[^"\']*', html, re.I)
+                            if mp4_match:
+                                captured_stream_url = mp4_match.group(0)
+                                logger.debug(f"DLStreams captured direct MP4 from page HTML: {captured_stream_url}")
+                        except Exception:
+                            pass
 
                     if manifest_text:
                         self._last_working_player[channel_id] = resolved_player_url
@@ -480,13 +504,13 @@ class DLStreamsExtractor:
 
                     logger.debug("DLStreams browser session capture completed for %s", channel_key)
                     self._last_session_refresh[channel_key] = time.time()
-                    return manifest_text
+                    return manifest_text, captured_stream_url
                 finally:
                     await page.close()
             except Exception as exc:
                 self._mark_browser_failure(channel_key)
                 logger.warning("DLStreams browser session capture failed for %s: %s", channel_key, exc)
-                return None
+                return None, None
 
     async def _get_session(self):
         # Determine the correct proxy for the current state
@@ -624,10 +648,12 @@ class DLStreamsExtractor:
             # 3. FETCH ACTUAL MANIFEST
             # Initial direct fetch attempt
             captured_manifest = None
+            captured_stream_url = None
             for candidate in candidate_urls:
                 captured_manifest = await self._fetch_manifest_directly(candidate, playback_headers)
                 if captured_manifest:
                     m3u8_url = candidate
+                    captured_stream_url = candidate
                     break
             
             if not captured_manifest:
@@ -636,20 +662,61 @@ class DLStreamsExtractor:
                 player_urls = self._prioritize_player_urls(channel_id)
                 for candidate in player_urls:
                     await self._prime_dlstreams_session(session, candidate)
-                    captured_manifest = await self._capture_browser_session_state(channel_id, candidate)
-                    if captured_manifest:
+                    captured_manifest, browser_stream_url = await self._capture_browser_session_state(channel_id, candidate)
+                    if captured_manifest or browser_stream_url:
                         # Recalculate base after re-capture
-                        lookup_base = self.stream_origin.rstrip("/")
-                        server_key = await self._lookup_server_key(lookup_base, channel_key, iframe_origin)
-                        m3u8_url = f"{lookup_base}/proxy/{server_key}/{channel_key}/mono.css"
+                        if browser_stream_url:
+                            captured_stream_url = browser_stream_url
+                            m3u8_url = browser_stream_url
+                            lookup_base = self._origin_of(browser_stream_url).rstrip("/")
+                        else:
+                            lookup_base = self.stream_origin.rstrip("/")
+                            server_key = await self._lookup_server_key(lookup_base, channel_key, iframe_origin)
+                            m3u8_url = f"{lookup_base}/proxy/{server_key}/{channel_key}/mono.css"
                         break
             
-            if not captured_manifest:
+            if not captured_manifest and not captured_stream_url:
                 self._mark_browser_failure(channel_key)
                 raise ExtractorError("Could not retrieve manifest after browser refresh.")
             
-            # Update micro-cache
-            self._manifest_cache[channel_key] = (captured_manifest, time.time())
+            # Update micro-cache only for actual manifests
+            if captured_manifest:
+                self._manifest_cache[channel_key] = (captured_manifest, time.time())
+
+            if captured_stream_url and not captured_manifest:
+                logger.info(f"Extracted direct stream URL: {captured_stream_url}")
+                direct_headers = {
+                    "Referer": f"{iframe_origin}/",
+                    "Origin": iframe_origin,
+                    "User-Agent": self.base_headers["User-Agent"],
+                    "Accept": "*/*",
+                    "X-Direct-Connection": "1",
+                }
+
+                cookie_header = self._get_cookie_header_for_url(captured_stream_url)
+                if self._captured_cookies:
+                    relevant_cookies = []
+                    stream_domain = urlparse(captured_stream_url).netloc
+                    entry_domain = urlparse(self.entry_origin).netloc
+                    for c in self._captured_cookies:
+                        if stream_domain in c['domain'] or entry_domain in c['domain'] or c['domain'] in stream_domain:
+                            relevant_cookies.append(f"{c['name']}={c['value']}")
+                    if relevant_cookies:
+                        browser_cookie_str = "; ".join(relevant_cookies)
+                        if cookie_header:
+                            cookie_header = f"{cookie_header}; {browser_cookie_str}"
+                        else:
+                            cookie_header = browser_cookie_str
+                if cookie_header:
+                    direct_headers["Cookie"] = cookie_header
+
+                mediaflow_endpoint = "proxy_stream_endpoint" if ".mp4" in captured_stream_url.lower() else self.mediaflow_endpoint
+                return {
+                    "destination_url": captured_stream_url,
+                    "request_headers": direct_headers,
+                    "mediaflow_endpoint": mediaflow_endpoint,
+                    "bypass_warp": self.bypass_warp_active
+                }
 
             # 2. SERVER LOOKUP: refresh once more after possible browser re-capture
             server_key = await self._lookup_server_key(lookup_base, channel_key, iframe_origin)

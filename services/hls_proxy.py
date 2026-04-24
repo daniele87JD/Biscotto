@@ -685,8 +685,12 @@ class HLSProxy:
     async def _retry_cccdn_request(self, request_target, headers, disable_ssl: bool):
         """Retry cccdn once via an alternate aiohttp route when direct access returns 403."""
         retry_proxy = None
-        if ENABLE_WARP:
+        if ENABLE_WARP and WARP_PROXY_URL and "127.0.0.1" not in WARP_PROXY_URL:
             retry_proxy = WARP_PROXY_URL
+        elif ENABLE_WARP and WARP_PROXY_URL:
+            from config import is_proxy_alive
+            if is_proxy_alive(WARP_PROXY_URL):
+                retry_proxy = WARP_PROXY_URL
         elif GLOBAL_PROXIES:
             retry_proxy = GLOBAL_PROXIES[0]
 
