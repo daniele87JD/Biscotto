@@ -127,7 +127,7 @@ class VixSrcExtractor:
         return self.session
 
     async def _make_robust_request(
-        self, url: str, headers: dict = None, retries: int = 3, initial_delay: int = 2
+        self, url: str, headers: dict = None, retries: int = 1, initial_delay: int = 2
     ):
         """Effettua richieste HTTP robuste con retry automatico."""
         final_headers = headers or {}
@@ -205,7 +205,41 @@ class VixSrcExtractor:
             except aiohttp.ClientResponseError as e:
                 if e.status == 404:
                     raise ExtractorError(f"VixSrc content not found (404): {url}")
-                
+
+                if e.status == 403 and attempt == retries - 1:
+                    try:
+                        from curl_cffi import requests as cffi_requests
+                        logger.info("aiohttp 403, trying curl_cffi for %s", url)
+                        headers_403 = final_headers or self._default_headers()
+                        loop = asyncio.get_running_loop()
+                        def _cffi_req():
+                            resp = cffi_requests.get(
+                                url,
+                                headers=headers_403,
+                                impersonate="chrome131",
+                                timeout=30,
+                                allow_redirects=True,
+                                verify=False,
+                            )
+                            return resp.status_code, resp.text, dict(resp.cookies) if resp.cookies else {}
+                        status_403, text_403, cookies_403 = await loop.run_in_executor(None, _cffi_req)
+                        if status_403 == 200 and text_403:
+                            logger.info("curl_cffi success for %s", url)
+                            class MockResponse:
+                                def __init__(self, text_content, status, response_url):
+                                    self._text = text_content
+                                    self.status = status
+                                    self.status_code = status
+                                    self.text = text_content
+                                    self.url = response_url
+                                    self.headers = {}
+                                async def text_async(self):
+                                    return self._text
+                                def raise_for_status(self):
+                                    pass
+                            return MockResponse(text_403, status_403, url)
+                    except Exception as cffi_exc:
+                        logger.warning("curl_cffi fallback failed for %s: %s", url, cffi_exc)
 
                 if attempt == retries - 1:
                     raise ExtractorError(f"Final HTTP error {e.status} for {url}: {str(e)}")
