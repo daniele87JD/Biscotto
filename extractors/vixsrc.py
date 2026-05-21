@@ -220,8 +220,8 @@ class VixSrcExtractor:
                             )
                             status_403 = resp.status_code
                             text_403 = resp.text
+                        logger.info("curl_cffi fallback status=%s len=%s for %s", status_403, len(text_403) if text_403 else 0, url)
                         if status_403 == 200 and text_403:
-                            logger.info("curl_cffi success for %s", url)
                             class MockResponse:
                                 def __init__(self, text_content, status, response_url):
                                     self._text = text_content
