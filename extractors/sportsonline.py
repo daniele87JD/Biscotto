@@ -8,7 +8,7 @@ from typing import Dict, Any
 import random
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
-from config import get_proxy_for_url, TRANSPORT_ROUTES, GLOBAL_PROXIES, get_connector_for_proxy
+from config import GLOBAL_PROXIES, get_connector_for_proxy, get_preferred_proxy_for_url
 
 
 logger = logging.getLogger(__name__)
@@ -154,10 +154,8 @@ class SportsonlineExtractor:
 
     async def _get_session(self, url: str = None):
         # Determina il proxy per l'URL (se fornito)
-        proxy = None
-        if url:
-            proxy = get_proxy_for_url(url, TRANSPORT_ROUTES, self.proxies)
-        else:
+        proxy = get_preferred_proxy_for_url(url, "sportsonline", self.proxies)
+        if not proxy and not url:
             proxy = self._get_random_proxy()
 
         if (

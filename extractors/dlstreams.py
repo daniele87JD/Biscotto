@@ -12,9 +12,8 @@ from yarl import URL
 
 from config import (
     GLOBAL_PROXIES,
-    TRANSPORT_ROUTES,
-    get_proxy_for_url,
     get_connector_for_proxy,
+    get_preferred_proxy_for_url,
 )
 from extractors.shared_browser import close_shared_browser, get_shared_browser_context
 
@@ -186,11 +185,11 @@ class DLStreamsExtractor:
 
     async def _launch_browser(self, url: str | None = None):
         target_url = url or self.entry_origin or self.stream_origin
-        proxy_url = get_proxy_for_url(
+        proxy_url = get_preferred_proxy_for_url(
             target_url,
-            TRANSPORT_ROUTES,
+            "dlstreams",
             self.proxies or GLOBAL_PROXIES,
-            bypass_warp=self.bypass_warp_active,
+            self.bypass_warp_active,
         ) if target_url else None
         async with self._browser_launch_lock:
             self._playwright, self._browser, self._context = await get_shared_browser_context(
@@ -631,7 +630,7 @@ class DLStreamsExtractor:
     async def _get_session(self, url: str | None = None):
         # Determine the correct proxy for the current state
         target_url = url or self.stream_origin or self.entry_origin
-        proxy_url = get_proxy_for_url(target_url, TRANSPORT_ROUTES, self.proxies, bypass_warp=self.bypass_warp_active)
+        proxy_url = get_preferred_proxy_for_url(target_url, "dlstreams", self.proxies, self.bypass_warp_active)
         
         # If we have an existing session, check if its proxy matches what we need now
         if self.session and not self.session.closed:

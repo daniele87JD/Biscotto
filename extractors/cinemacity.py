@@ -7,7 +7,7 @@ import urllib.parse
 from typing import Any, Optional
 
 import aiohttp
-from config import FLARESOLVERR_URL, FLARESOLVERR_TIMEOUT, get_proxy_for_url, TRANSPORT_ROUTES, GLOBAL_PROXIES, get_solver_proxy_url
+from config import FLARESOLVERR_URL, FLARESOLVERR_TIMEOUT, GLOBAL_PROXIES, get_solver_proxy_url, get_ordered_proxies_for_url
 from config import PROXY_TEST_TIMEOUT
 from curl_cffi.requests import AsyncSession
 
@@ -44,14 +44,7 @@ class CinemaCityExtractor:
         if self._cookies and self._user_agent:
             return
         endpoint = f"{self.flaresolverr_url.rstrip('/')}/v1"
-        # self.proxies has priority order: [primary] + [extractor-specific] + [GLOBAL_PROXIES]
-        proxies_to_try = []
-        for proxy in self.proxies or []:
-            if proxy and proxy not in proxies_to_try:
-                proxies_to_try.append(proxy)
-        route_proxy = get_proxy_for_url(self.base_url, TRANSPORT_ROUTES, self.proxies)
-        if route_proxy and route_proxy not in proxies_to_try:
-            proxies_to_try.append(route_proxy)
+        proxies_to_try = get_ordered_proxies_for_url(self.base_url, "cinemacity", self.proxies)
         if None not in proxies_to_try:
             proxies_to_try.append(None)
         logger.info(f"CinemaCity FS proxy list ({len(proxies_to_try)}): {[p or 'direct' for p in proxies_to_try[:5]]}...")

@@ -8,7 +8,7 @@ import time
 from urllib.parse import urljoin, urlparse
 
 import cloudscraper
-from config import GLOBAL_PROXIES, TRANSPORT_ROUTES, get_proxy_for_url
+from config import get_preferred_proxy_for_url
 from utils.cookie_cache import CookieCache
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class DoodStreamExtractor:
         self.mediaflow_endpoint = "proxy_stream_endpoint"
         self.cache = CookieCache("dood")
     def _get_proxy(self, url: str, bypass_warp: bool = None) -> str | None:
-        return get_proxy_for_url(url, TRANSPORT_ROUTES, GLOBAL_PROXIES, bypass_warp=bypass_warp)
+        return get_preferred_proxy_for_url(url, "doodstream", self.proxies, bypass_warp)
 
     def _normalize_proxy_url(self, proxy_value: str) -> str:
         proxy_value = proxy_value.strip()
@@ -50,8 +50,6 @@ class DoodStreamExtractor:
         return proxy_value
 
     def _build_scraper_proxies(self, url: str, proxy_url: str | None = None, bypass_warp: bool = None) -> dict | None:
-        if not proxy_url and self.proxies:
-            proxy_url = self.proxies[0]
         if not proxy_url:
             proxy_url = self._get_proxy(url, bypass_warp=bypass_warp)
         if not proxy_url:

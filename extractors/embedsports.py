@@ -10,7 +10,7 @@ from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from yarl import URL
 
-from config import GLOBAL_PROXIES, TRANSPORT_ROUTES, get_connector_for_proxy, get_proxy_for_url
+from config import GLOBAL_PROXIES, get_connector_for_proxy, get_preferred_proxy_for_url
 from extractors.shared_browser import close_shared_browser, get_shared_browser_context
 
 logger = logging.getLogger(__name__)
@@ -169,11 +169,8 @@ class EmbedSportsExtractor:
             pass
 
     async def _get_session(self, url: str = EMBEDSPORTS_ORIGIN) -> ClientSession:
-        proxy_url = get_proxy_for_url(
-            url,
-            TRANSPORT_ROUTES,
-            self.proxies or GLOBAL_PROXIES,
-            bypass_warp=self.bypass_warp_active,
+        proxy_url = get_preferred_proxy_for_url(
+            url, "embedsports", self.proxies or GLOBAL_PROXIES, self.bypass_warp_active
         )
 
         if self.session and not self.session.closed and self._session_proxy == proxy_url:
@@ -197,11 +194,8 @@ class EmbedSportsExtractor:
         return self.session
 
     async def _launch_browser(self, url: str = EMBEDSPORTS_ORIGIN):
-        proxy_url = get_proxy_for_url(
-            url,
-            TRANSPORT_ROUTES,
-            self.proxies or GLOBAL_PROXIES,
-            bypass_warp=self.bypass_warp_active,
+        proxy_url = get_preferred_proxy_for_url(
+            url, "embedsports", self.proxies or GLOBAL_PROXIES, self.bypass_warp_active
         )
         async with self._browser_launch_lock:
             self._playwright, self._browser, self._context = await get_shared_browser_context(

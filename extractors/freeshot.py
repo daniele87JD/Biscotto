@@ -4,7 +4,7 @@ import asyncio
 import urllib.parse
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
-from config import FLARESOLVERR_URL, FLARESOLVERR_TIMEOUT, get_proxy_for_url, TRANSPORT_ROUTES, GLOBAL_PROXIES, get_connector_for_proxy
+from config import FLARESOLVERR_URL, FLARESOLVERR_TIMEOUT, GLOBAL_PROXIES, get_connector_for_proxy, get_preferred_proxy_for_url
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class FreeshotExtractor:
 
 
     async def _get_session(self, url: str = None):
-        proxy = get_proxy_for_url(url, TRANSPORT_ROUTES, self.proxies) if url else None
+        proxy = get_preferred_proxy_for_url(url, "freeshot", self.proxies)
         if (
             self.session is None
             or self.session.closed

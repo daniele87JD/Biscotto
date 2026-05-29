@@ -13,9 +13,9 @@ import aiohttp
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from aiohttp_socks import ProxyError as AioProxyError
 from python_socks import ProxyError as PyProxyError
-from config import get_proxy_for_url, TRANSPORT_ROUTES, GLOBAL_PROXIES, get_connector_for_proxy, SELECTED_PROXY_CONTEXT, get_solver_proxy_url
+from config import TRANSPORT_ROUTES, GLOBAL_PROXIES, get_connector_for_proxy, SELECTED_PROXY_CONTEXT, get_solver_proxy_url, get_extractor_proxies, get_ordered_proxies_for_url, get_preferred_proxy_for_url
 from config import PROXY_TEST_TIMEOUT, PROXY_TEST_CONCURRENCY
-from config import FLARESOLVERR_URL, FLARESOLVERR_TIMEOUT, WARP_PROXY_URL
+from config import FLARESOLVERR_URL, FLARESOLVERR_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class VixSrcExtractor:
             "VixSrc proxy config: transport_routes=%d extractor_proxies=%d resolved_vixsrc=%s",
             len(TRANSPORT_ROUTES),
             len(self.proxies or []),
-            get_proxy_for_url("https://vixsrc.to/", TRANSPORT_ROUTES, self.proxies or []),
+            get_preferred_proxy_for_url("https://vixsrc.to/", self.extractor_name, self.proxies),
         )
     @staticmethod
     def _normalize_proxy_url(proxy_value: str) -> str:
@@ -80,18 +80,10 @@ class VixSrcExtractor:
             return
         site = self._normalize_base_site(target_url)
         endpoint = f"{self.flaresolverr_url.rstrip('/')}/v1"
-        warp = WARP_PROXY_URL.strip()
         proxies_to_try = []
-        if warp:
-            proxies_to_try.append(get_solver_proxy_url(warp))
-        route_proxy = get_proxy_for_url(site, TRANSPORT_ROUTES, self.proxies)
-        if route_proxy:
-            solver_route_proxy = get_solver_proxy_url(route_proxy)
-            if solver_route_proxy not in proxies_to_try:
-                proxies_to_try.append(solver_route_proxy)
         # FlareSolverr opens a browser per attempt; keep this short.
-        # Normal Cloudflare bypass is handled by curl_cffi proxy rotation first.
-        for proxy in (self.proxies or [])[:3]:
+        # Extractor-specific proxies must be attempted before route/global/WARP.
+        for proxy in get_ordered_proxies_for_url(site, self.extractor_name, self.proxies)[:3]:
             solver_proxy = get_solver_proxy_url(proxy) if proxy else None
             if solver_proxy and solver_proxy not in proxies_to_try:
                 proxies_to_try.append(solver_proxy)
@@ -183,11 +175,8 @@ class VixSrcExtractor:
                 if self.status >= 400:
                     raise ExtractorError(f"curl_cffi HTTP error {self.status} for {self.url}")
 
-        proxies_to_try = []
-        for proxy in self.proxies or []:
-            if proxy and proxy not in proxies_to_try:
-                proxies_to_try.append(proxy)
-        route_proxy = get_proxy_for_url(url, TRANSPORT_ROUTES, self.proxies)
+        proxies_to_try = get_ordered_proxies_for_url(url, self.extractor_name, self.proxies)
+        route_proxy = get_preferred_proxy_for_url(url, self.extractor_name, self.proxies)
         logger.info(
             "VixSrc curl proxy lookup: url=%s transport_routes=%d extractor_proxies=%d resolved=%d route_proxy=%s",
             url,
@@ -235,6 +224,9 @@ class VixSrcExtractor:
             except Exception as exc:
                 return False, proxy, None, exc, None
 
+        specific = [p for p in get_extractor_proxies(self.extractor_name) if p in proxies_to_try]
+        proxy_batches = [specific, [p for p in proxies_to_try if p not in specific]] if specific else [proxies_to_try]
+
         for imp in impersonations:
             logger.info(
                 "VixSrc curl_cffi testing %d proxies for %s (imp=%s, concurrency=%d, timeout=%ss)",
@@ -246,27 +238,30 @@ class VixSrcExtractor:
                 async with semaphore:
                     return await _try_one(proxy_value, imp)
 
-            tasks = [asyncio.create_task(_limited(proxy_value)) for proxy_value in proxies_to_try]
-            try:
-                for task in asyncio.as_completed(tasks):
-                    ok, proxy, response, exc, status = await task
-                    if ok:
-                        for pending in tasks:
-                            if not pending.done():
-                                pending.cancel()
-                        await asyncio.gather(*tasks, return_exceptions=True)
-                        self.last_used_proxy = proxy
-                        logger.info("curl_cffi success via %s for %s (imp=%s)", proxy or "direct", url, imp)
-                        return response
-                    if isinstance(status, int):
-                        last_status = status
-                    if exc:
-                        last_error = exc
-            finally:
-                for pending in tasks:
-                    if not pending.done():
-                        pending.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+            for proxy_batch in proxy_batches:
+                if not proxy_batch:
+                    continue
+                tasks = [asyncio.create_task(_limited(proxy_value)) for proxy_value in proxy_batch]
+                try:
+                    for task in asyncio.as_completed(tasks):
+                        ok, proxy, response, exc, status = await task
+                        if ok:
+                            for pending in tasks:
+                                if not pending.done():
+                                    pending.cancel()
+                            await asyncio.gather(*tasks, return_exceptions=True)
+                            self.last_used_proxy = proxy
+                            logger.info("curl_cffi success via %s for %s (imp=%s)", proxy or "direct", url, imp)
+                            return response
+                        if isinstance(status, int):
+                            last_status = status
+                        if exc:
+                            last_error = exc
+                finally:
+                    for pending in tasks:
+                        if not pending.done():
+                            pending.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
         if last_error:
             raise ExtractorError(f"curl_cffi request failed for {url}: {last_error}")
@@ -413,7 +408,7 @@ class VixSrcExtractor:
         if self.session is None or self.session.closed:
             proxy = None
             if url:
-                proxy = get_proxy_for_url(url, TRANSPORT_ROUTES, self.proxies)
+                proxy = get_preferred_proxy_for_url(url, self.extractor_name, self.proxies)
             else:
                 proxy = self._get_random_proxy()
             if proxy:

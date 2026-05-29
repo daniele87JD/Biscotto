@@ -1,18 +1,16 @@
 import logging
 import asyncio
-import random
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout, TCPConnector, ClientConnectionError
 from aiohttp_socks import ProxyError as AioProxyError
 from python_socks import ProxyError as PyProxyError
 
 from config import (
-    get_proxy_for_url, 
-    TRANSPORT_ROUTES, 
     get_connector_for_proxy,
     SELECTED_PROXY_CONTEXT,
     GLOBAL_PROXIES,
-    mark_proxy_dead
+    mark_proxy_dead,
+    get_preferred_proxy_for_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,11 +34,7 @@ class BaseExtractor:
         
 
     async def _get_session(self, url: str = None):
-        proxy = None
-        if url:
-            proxy = get_proxy_for_url(url, TRANSPORT_ROUTES, self.proxies)
-        elif self.proxies:
-            proxy = random.choice(self.proxies)
+        proxy = get_preferred_proxy_for_url(url, self.extractor_name, self.proxies)
 
         if (
             self.session is None
