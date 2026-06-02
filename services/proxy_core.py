@@ -308,13 +308,13 @@ class HLSProxyCoreMixin:
         asyncio.create_task(self._cleanup_stale_sessions())
 
     async def _cleanup_stale_sessions(self):
-        """Periodically close stale extractors unused for >30s."""
+        """Periodically close stale extractors unused for >5m."""
         while True:
             await asyncio.sleep(60)
             now = time.time()
             stale_ext = [
                 k for k, t in self._extractor_atimes.items()
-                if now - t > 30 and k in self.extractors
+                if now - t > 300 and k in self.extractors
             ]
             for key in stale_ext:
                 ext = self.extractors.pop(key, None)
@@ -695,6 +695,20 @@ class HLSProxyCoreMixin:
                     self._extractor_atimes[key] = time.time()
                     break
         return result
+
+    def _extractor_key_for_instance(self, extractor) -> str | None:
+        for key, cached_extractor in self.extractors.items():
+            if cached_extractor is extractor:
+                return key
+        return None
+
+    def _touch_extractor_activity(self, extractor_key: str | None = None):
+        now = time.time()
+        if extractor_key and extractor_key in self.extractors:
+            self._extractor_atimes[extractor_key] = now
+            return
+        for key in self.extractors:
+            self._extractor_atimes[key] = now
 
     async def _resolve_url_id(self, url_id: str) -> str | None:
         """Risolve un url_id nell'URL originale."""

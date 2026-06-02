@@ -57,6 +57,7 @@ class HLSProxyStreamingMixin:
             ext = get_browser_activity_extractor(self.extractors)
             if ext and hasattr(ext, "_update_shared_activity"):
                 ext._update_shared_activity()
+            self._touch_extractor_activity(request.query.get("extractor_key"))
 
             headers = dict(stream_headers)
             is_special_cdn = is_special_cdn_stream(segment_url)
@@ -202,6 +203,7 @@ class HLSProxyStreamingMixin:
             ext = get_browser_activity_extractor(self.extractors)
             if ext and hasattr(ext, "_update_shared_activity"):
                 ext._update_shared_activity()
+            self._touch_extractor_activity(request.query.get("extractor_key"))
 
             headers = dict(stream_headers)
 
@@ -720,6 +722,7 @@ class HLSProxyStreamingMixin:
                         disable_ssl=disable_ssl,
                         selected_proxy=forced_proxy, # ✅ PASSA IL PROXY FORZATO
                         force_direct=force_direct,
+                        extractor_key=request.query.get("extractor_key"),
                     )
                     return web.Response(text=rewritten, headers={
                         "Content-Type": "application/vnd.apple.mpegurl",
@@ -916,14 +919,14 @@ class HLSProxyStreamingMixin:
 
 
         except (ClientPayloadError, ConnectionResetError, OSError) as e:
-            # Errori tipici di disconnessione del client (o proxy caduto/disconnesso mid-stream)
+            # Errori tipici di disconnessione client o payload troncato durante stream.
+            # Non punire il proxy: i player HLS cancellano spesso richieste in corso.
             active_proxy = session_proxy or forced_proxy
             if active_proxy:
-                logger.warning(
-                    "Proxy %s failed during stream fetch (payload/reset error): %r. Marking dead.",
+                logger.info(
+                    "Stream interrupted while using proxy %s (payload/reset): %r.",
                     active_proxy, e
                 )
-                mark_proxy_dead(active_proxy)
             warp_retry_response = await retry_direct_after_warp(e)
             if warp_retry_response:
                 return warp_retry_response
