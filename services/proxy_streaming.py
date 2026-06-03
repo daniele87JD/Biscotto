@@ -109,7 +109,7 @@ class HLSProxyStreamingMixin:
                         final_segment_url,
                         headers=headers,
                         ssl=not disable_ssl,
-                        timeout=ClientTimeout(total=20, connect=5, sock_connect=5, sock_read=15),
+                        timeout=ClientTimeout(total=15, connect=5, sock_connect=5, sock_read=5),
                     )
                     resp = await resp_ctx.__aenter__()
                     break
@@ -352,7 +352,7 @@ class HLSProxyStreamingMixin:
                 HAS_CURL_CFFI,
             )
             is_hls_segment_request = request.path.startswith("/proxy/hls/segment.")
-            segment_timeout = ClientTimeout(total=20, connect=5, sock_connect=5, sock_read=15)
+            segment_timeout = ClientTimeout(total=15, connect=5, sock_connect=5, sock_read=5)
 
             if use_curl_cffi:
                 logger.info(f"🚀 [curl_cffi] Using browser impersonation for: {stream_url}")
