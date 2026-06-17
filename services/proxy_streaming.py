@@ -629,7 +629,7 @@ class HLSProxyStreamingMixin:
                     logger.warning(f"⚠️ Upstream returned error {resp.status} for {stream_url} [Routing: {routing}]")
                     return web.Response(body=error_body, status=resp.status, headers={"Content-Type": content_type, "Access-Control-Allow-Origin": "*"})
 
-                is_direct_media_stream = request.path == "/proxy/stream" and (
+                is_direct_media_stream = (
                     "video/" in content_type or stream_url.lower().endswith((".mp4", ".mkv", ".avi", ".mov"))
                 )
 
