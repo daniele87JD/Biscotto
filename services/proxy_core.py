@@ -645,14 +645,18 @@ class HLSProxyCoreMixin:
         if raw[:8] != b"TIKTIKPX":
             return None
         length = int.from_bytes(raw[8:12], "big")
+        if length < 2 or 12 + length > len(raw):
+            return None
         gz = raw[12:12 + length]
-        if len(gz) < 2 or gz[:2] != b"\x1f\x8b":
+        if gz[:2] != b"\x1f\x8b":
             return None
         try:
             ts = gzip.decompress(gz)
         except Exception:
             return None
-        return ts if ts[:1] == b"\x47" else None
+        if len(ts) <= 188 or ts[0] != 0x47 or ts[188] != 0x47:
+            return None
+        return ts
 
     @staticmethod
     def _strip_fake_png_header_from_ts(content: bytes) -> bytes:
