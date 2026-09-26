@@ -1086,8 +1086,11 @@ class HLSProxyStreamingMixin:
                     and 'mpegurl' not in content_type
                     and not content_type.startswith('text/')
                 )
+                # Image-wrapped segments need the full body to be unwrapped, so
+                # they must not take the chunk-by-chunk streaming path.
+                is_image_payload = content_type.startswith("image/")
 
-                if is_direct_media_stream or is_segment_like:
+                if (is_direct_media_stream or is_segment_like) and not is_image_payload:
                     stream_ext = os.path.splitext(stream_url.split("?", 1)[0].lower())[1]
                     is_fmp4_segment = stream_ext in {".m4s", ".mp4", ".m4a", ".m4v", ".m4i"}
                     requested_media_type = request.query.get("media_type", "").lower()
@@ -1343,9 +1346,20 @@ class HLSProxyStreamingMixin:
                 # Streaming normale per altri tipi di contenuto (segmenti binari)
                 # Il body è già stato letto in content_bytes, usiamo quello.
                 segment_was_stripped = False
-                if request.path.endswith(".ts") or stream_url.endswith(".ts"):
+                is_wrapped_image_segment = (
+                    is_image_payload
+                    or content_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+                    or (content_bytes[:4] == b"RIFF" and content_bytes[8:12] == b"WEBP")
+                )
+                if (
+                    request.path.endswith(".ts")
+                    or stream_url.endswith(".ts")
+                    or is_wrapped_image_segment
+                ):
                     original_len = len(content_bytes)
-                    content_bytes = self._strip_fake_png_header_from_ts(content_bytes)
+                    content_bytes = await asyncio.to_thread(
+                        self._strip_fake_png_header_from_ts, content_bytes
+                    )
                     segment_was_stripped = len(content_bytes) != original_len
 
                 response_headers = {}
@@ -1377,6 +1391,8 @@ class HLSProxyStreamingMixin:
                 ).lower():
                     set_response_header(response_headers, "Content-Type", "text/vtt; charset=utf-8")
                 if segment_was_stripped:
+                    if response_headers.get("content-type", "").lower().startswith("image/"):
+                        set_response_header(response_headers, "Content-Type", "video/mp2t")
                     set_response_header(
                         response_headers, "Content-Length", str(len(content_bytes))
                     )
